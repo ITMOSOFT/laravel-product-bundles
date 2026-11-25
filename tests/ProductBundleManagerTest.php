@@ -2,8 +2,11 @@
 
 namespace ItmoSoft\ProductBundles\Tests;
 
+use Illuminate\Database\Eloquent\Model;
+use InvalidArgumentException;
 use ItmoSoft\ProductBundles\ProductBundleManager;
 use ItmoSoft\ProductBundles\Models\ProductBundle;
+use ItmoSoft\ProductBundles\Models\ProductBundleItem;
 
 class ProductBundleManagerTest extends TestCase
 {
@@ -31,19 +34,19 @@ class ProductBundleManagerTest extends TestCase
 
     public function test_it_rejects_missing_name(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
+        $this->expectException(InvalidArgumentException::class);
         app(ProductBundleManager::class)->createBundle([]);
     }
 
     public function test_it_requires_fixed_price_for_fixed_bundle(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
+        $this->expectException(InvalidArgumentException::class);
         app(ProductBundleManager::class)->createBundle(['name' => 'No Price']);
     }
 
     public function test_it_rejects_unknown_pricing_type(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
+        $this->expectException(InvalidArgumentException::class);
         app(ProductBundleManager::class)->createBundle([
             'name' => 'Invalid',
             'pricing_type' => 'custom',
@@ -73,7 +76,7 @@ class ProductBundleManagerTest extends TestCase
         $bundle = $manager->createBundle(['name' => 'Bundle', 'fixed_price' => '10']);
         $component = TestComponent::query()->create(['name' => 'Item']);
 
-        $this->expectException(\InvalidArgumentException::class);
+        $this->expectException(InvalidArgumentException::class);
         $manager->addComponent($bundle, $component, 0, '1.00');
     }
 
@@ -83,7 +86,7 @@ class ProductBundleManagerTest extends TestCase
         $bundle = $manager->createBundle(['name' => 'Bundle', 'fixed_price' => '10']);
         $component = TestComponent::query()->create(['name' => 'Item']);
 
-        $this->expectException(\InvalidArgumentException::class);
+        $this->expectException(InvalidArgumentException::class);
         $manager->addComponent($bundle, $component, 1, '-1.00');
     }
 
@@ -157,5 +160,98 @@ class ProductBundleManagerTest extends TestCase
         $bundle = $manager->createBundle(['name' => 'Travel Pack', 'fixed_price' => '25']);
 
         $this->assertSame($bundle->id, $manager->findBundle('travel-pack')->id);
+    }
+
+    public function test_it_rejects_unsaved_component_models(): void
+    {
+        $manager = app(ProductBundleManager::class);
+        $bundle = $manager->createBundle(['name' => 'Bundle', 'fixed_price' => '10']);
+        $unsaved = new TestComponent();
+
+        $this->expectException(InvalidArgumentException::class);
+        $manager->addComponent($bundle, $unsaved);
+    }
+
+    public function test_it_rejects_unsaved_bundle_instances(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        app(ProductBundleManager::class)->findBundle(new ProductBundle(['name' => 'Unsaved']));
+    }
+
+    public function test_it_rejects_non_finite_component_prices(): void
+    {
+        $manager = app(ProductBundleManager::class);
+        $bundle = $manager->createBundle(['name' => 'Bundle', 'fixed_price' => '10']);
+        $component = TestComponent::query()->create(['name' => 'Item']);
+
+        $this->expectException(InvalidArgumentException::class);
+        $manager->addComponent($bundle, $component, 1, INF);
+    }
+
+    public function test_it_rejects_invalid_fixed_bundle_price(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        app(ProductBundleManager::class)->createBundle([
+            'name' => 'Invalid Price',
+            'fixed_price' => INF,
+        ]);
+    }
+
+    public function test_it_rejects_invalid_currency(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        app(ProductBundleManager::class)->createBundle([
+            'name' => 'Invalid Currency',
+            'fixed_price' => '10',
+            'currency' => 'USDD',
+        ]);
+    }
+
+    public function test_it_rejects_negative_component_position(): void
+    {
+        $manager = app(ProductBundleManager::class);
+        $bundle = $manager->createBundle(['name' => 'Bundle', 'fixed_price' => '10']);
+        $component = TestComponent::query()->create(['name' => 'Item']);
+
+        $this->expectException(InvalidArgumentException::class);
+        $manager->addComponent($bundle, $component, 1, '1.00', -1);
+    }
+
+    public function test_invalid_sync_does_not_delete_existing_components(): void
+    {
+        $manager = app(ProductBundleManager::class);
+        $bundle = $manager->createBundle(['name' => 'Bundle', 'pricing_type' => 'dynamic']);
+        $existing = TestComponent::query()->create(['name' => 'Existing']);
+        $unsaved = new TestComponent();
+
+        $manager->addComponent($bundle, $existing, 1, '9.00');
+
+        try {
+            $manager->syncComponents($bundle, [
+                ['component' => $unsaved, 'quantity' => 1, 'unit_price' => '2.00'],
+            ]);
+            $this->fail('Expected invalid component to be rejected.');
+        } catch (InvalidArgumentException) {
+            $this->assertDatabaseHas('itmosoft_product_bundle_items', [
+                'bundle_id' => $bundle->id,
+                'component_id' => $existing->id,
+            ]);
+        }
+    }
+
+    public function test_dynamic_total_rejects_invalid_stored_component_quantity(): void
+    {
+        $manager = app(ProductBundleManager::class);
+        $bundle = $manager->createBundle(['name' => 'Bundle', 'pricing_type' => 'dynamic']);
+
+        // Simulate corrupted legacy data without bypassing database constraints.
+        $invalidItem = new ProductBundleItem([
+            'quantity' => 0,
+            'unit_price' => '1.0000',
+        ]);
+        $bundle->setRelation('items', collect([$invalidItem]));
+
+        $this->expectException(InvalidArgumentException::class);
+        $manager->calculatePrice($bundle);
     }
 }

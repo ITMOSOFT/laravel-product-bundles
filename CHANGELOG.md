@@ -2,6 +2,18 @@
 
 All notable changes to `itmosoft/laravel-product-bundles` are documented here.
 
+## [1.0.1] - 2026-11-25
+
+### Fixed
+- Reject unsaved bundle and component models.
+- Validate finite, non-negative fixed and component prices.
+- Validate three-letter bundle currencies.
+- Reject negative component positions.
+- Validate complete component replacement before deleting existing rows.
+- Lock bundle row during component synchronization.
+- Guard dynamic price calculation against invalid stored values and numeric overflow.
+- Add regression tests for the above cases.
+
 ## [1.0.0] - 2026-11-16
 
 ### Added
